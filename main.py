@@ -15,6 +15,7 @@ inngest_client=inngest.Inngest(
     logger=logging.getLogger("uvicorn"),
     is_production=False,
     serializer=inngest.PydanticSerializer()
+    
 )
 
 @inngest_client.create_function(
