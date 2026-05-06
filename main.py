@@ -13,10 +13,17 @@ from custom_types import RAQQueryResult, RAGSearchResult, RAGUpsertResult, RAGCh
 
 load_dotenv()
 
+inngest_dev = os.getenv("INNGEST_DEV", "").lower() in {"1", "true", "yes"}
+inngest_event_key = os.getenv("INNGEST_EVENT_KEY")
+inngest_signing_key = os.getenv("INNGEST_SIGNING_KEY")
+inngest_is_production = bool(inngest_event_key and inngest_signing_key and not inngest_dev)
+
 inngest_client = inngest.Inngest(
     app_id="rag_app",
     logger=logging.getLogger("uvicorn"),
-    is_production=bool(os.getenv("INNGEST_SIGNING_KEY")),
+    event_key=inngest_event_key,
+    signing_key=inngest_signing_key,
+    is_production=inngest_is_production,
     serializer=inngest.PydanticSerializer()
 )
 
