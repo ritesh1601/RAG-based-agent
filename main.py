@@ -1,5 +1,7 @@
 import logging
-from fastapi import FastAPI
+from pathlib import Path
+
+from fastapi import FastAPI, File, HTTPException, UploadFile
 import inngest
 import inngest.fast_api
 from inngest.experimental import ai
@@ -12,6 +14,8 @@ from vector_db import QdrantStorage
 from custom_types import RAQQueryResult, RAGSearchResult, RAGUpsertResult, RAGChunkAndSrc
 
 load_dotenv()
+
+UPLOADS_DIR = Path(os.getenv("UPLOADS_DIR", "uploads"))
 
 inngest_dev = os.getenv("INNGEST_DEV", "").lower() in {"1", "true", "yes"}
 inngest_event_key = os.getenv("INNGEST_EVENT_KEY")
@@ -106,5 +110,64 @@ async def rag_query_pdf_ai(ctx: inngest.Context):
     return {"answer": answer, "sources": found.sources, "num_contexts": len(found.contexts)}
 
 app = FastAPI()
+
+
+@app.get("/health")
+async def health():
+    return {"ok": True, "app": "rag_app"}
+
+
+@app.post("/upload")
+async def upload_pdf(file: UploadFile = File(...)):
+    if file.content_type not in {"application/pdf", "application/octet-stream"}:
+        raise HTTPException(status_code=400, detail="Only PDF uploads are supported")
+
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    safe_name = Path(file.filename or "document.pdf").name
+    if not safe_name.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Uploaded file must be a PDF")
+
+    file_path = UPLOADS_DIR / f"{uuid.uuid4()}-{safe_name}"
+    file_path.write_bytes(await file.read())
+
+    event_ids = await inngest_client.send(
+        inngest.Event(
+            name="rag/ingest_pdf",
+            data={
+                "pdf_path": str(file_path.resolve()),
+                "source_id": safe_name,
+            },
+        )
+    )
+
+    return {
+        "status": "queued",
+        "event_id": event_ids[0],
+        "filename": safe_name,
+    }
+
+
+@app.post("/query")
+async def query_pdf(payload: dict):
+    question = str(payload.get("question", "")).strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Question is required")
+
+    top_k = int(payload.get("top_k", 5))
+    event_ids = await inngest_client.send(
+        inngest.Event(
+            name="rag/query_pdf_ai",
+            data={
+                "question": question,
+                "top_k": top_k,
+            },
+        )
+    )
+
+    return {
+        "status": "queued",
+        "event_id": event_ids[0],
+    }
+
 
 inngest.fast_api.serve(app, inngest_client, [rag_inngest_pdf, rag_query_pdf_ai])

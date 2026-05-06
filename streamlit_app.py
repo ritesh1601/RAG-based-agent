@@ -1,20 +1,16 @@
-import asyncio
 import os
-from pathlib import Path
 import time
 
 from dotenv import load_dotenv
-import inngest
 import requests
 import streamlit as st
 
 
 load_dotenv()
 
-INNGEST_APP_ID = "rag_app"
 INNGEST_UI_URL = os.getenv("INNGEST_UI_URL", "http://127.0.0.1:8288")
 INNGEST_API_BASE = os.getenv("INNGEST_API_BASE", f"{INNGEST_UI_URL}/v1")
-UPLOADS_DIR = Path("uploads")
+FASTAPI_URL = os.getenv("FASTAPI_URL", "http://127.0.0.1:8000").rstrip("/")
 
 
 st.set_page_config(
@@ -265,23 +261,21 @@ st.markdown(
 )
 
 
-@st.cache_resource
-def get_inngest_client() -> inngest.Inngest:
-    return inngest.Inngest(app_id=INNGEST_APP_ID, is_production=False)
+def upload_pdf_to_backend(file) -> dict:
+    files = {"file": (file.name, file.getvalue(), "application/pdf")}
+    response = requests.post(f"{FASTAPI_URL}/upload", files=files, timeout=60)
+    response.raise_for_status()
+    return response.json()
 
 
-def save_uploaded_pdf(file) -> Path:
-    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-    safe_name = Path(file.name).name
-    file_path = UPLOADS_DIR / safe_name
-    file_path.write_bytes(file.getbuffer())
-    return file_path
-
-
-async def send_event(name: str, data: dict) -> str:
-    client = get_inngest_client()
-    event_ids = await client.send(inngest.Event(name=name, data=data))
-    return event_ids[0]
+def send_query_to_backend(question: str, top_k: int) -> dict:
+    response = requests.post(
+        f"{FASTAPI_URL}/query",
+        json={"question": question, "top_k": top_k},
+        timeout=30,
+    )
+    response.raise_for_status()
+    return response.json()
 
 
 def fetch_runs(event_id: str) -> list[dict]:
@@ -347,7 +341,7 @@ with st.sidebar:
     st.markdown(f'<span class="status-pill">{embedding_mode}</span>', unsafe_allow_html=True)
     st.divider()
     st.markdown("**Services**")
-    st.caption(f"FastAPI: `http://127.0.0.1:8000/api/inngest`")
+    st.caption(f"FastAPI: `{FASTAPI_URL}`")
     st.caption(f"Inngest: `{INNGEST_UI_URL}`")
     st.caption("Qdrant: `http://localhost:6333`")
     st.divider()
@@ -398,18 +392,10 @@ with left:
     if st.button("Start Ingestion", disabled=ingest_disabled, use_container_width=True):
         with st.spinner("Starting ingestion workflow..."):
             try:
-                pdf_path = save_uploaded_pdf(uploaded)
-                event_id = asyncio.run(
-                    send_event(
-                        "rag/ingest_pdf",
-                        {
-                            "pdf_path": str(pdf_path.resolve()),
-                            "source_id": pdf_path.name,
-                        },
-                    )
-                )
+                result = upload_pdf_to_backend(uploaded)
+                event_id = result["event_id"]
                 st.session_state["last_ingest_event_id"] = event_id
-                st.success(f"Ingestion started for {pdf_path.name}")
+                st.success(f"Ingestion started for {result['filename']}")
                 st.caption(f"Event ID: {event_id}")
             except Exception as exc:
                 st.error(f"Could not start ingestion: {exc}")
@@ -443,15 +429,8 @@ with right:
         else:
             with st.spinner("Retrieving context and generating answer..."):
                 try:
-                    event_id = asyncio.run(
-                        send_event(
-                            "rag/query_pdf_ai",
-                            {
-                                "question": question.strip(),
-                                "top_k": int(top_k),
-                            },
-                        )
-                    )
+                    result = send_query_to_backend(question.strip(), int(top_k))
+                    event_id = result["event_id"]
                     output = wait_for_run_output(event_id)
                     st.session_state["last_answer"] = output.get("answer", "")
                     st.session_state["last_sources"] = output.get("sources", [])
