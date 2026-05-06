@@ -1,14 +1,20 @@
 from openai import OpenAI
+from openai import APITimeoutError, APIConnectionError, RateLimitError
 from llama_index.readers.file import PDFReader
 from llama_index.core.node_parser import SentenceSplitter
 from dotenv import load_dotenv
+import hashlib
+import os
+import time
 
 load_dotenv()
 
-client = OpenAI()
+client = None
 
 EMBED_MODEL = "text-embedding-3-large"
 EMBED_DIM = 3072
+EMBED_BATCH_SIZE = int(os.getenv("EMBED_BATCH_SIZE", "32"))
+USE_FAKE_EMBEDDINGS = os.getenv("USE_FAKE_EMBEDDINGS", "").lower() in {"1", "true", "yes"}
 
 
 splitter = SentenceSplitter(chunk_size=1000, chunk_overlap=200)
@@ -22,9 +28,46 @@ def load_and_chunk_pdf(path: str):
     return chunks
 
 
+def get_openai_client() -> OpenAI:
+    global client
+    if client is None:
+        client = OpenAI(
+            timeout=float(os.getenv("OPENAI_TIMEOUT_SECONDS", "60")),
+            max_retries=int(os.getenv("OPENAI_MAX_RETRIES", "2")),
+        )
+    return client
+
+
+def fake_embedding(text: str) -> list[float]:
+    digest = hashlib.sha256(text.encode("utf-8")).digest()
+    values = []
+    for i in range(EMBED_DIM):
+        byte = digest[i % len(digest)]
+        values.append((byte / 127.5) - 1.0)
+    return values
+
+
 def embed_texts(texts: list[str]) -> list[list[float]]:
-    response = client.embeddings.create(
-        model=EMBED_MODEL,
-        input=texts,
-    )
-    return [item.embedding for item in response.data]
+    if USE_FAKE_EMBEDDINGS:
+        return [fake_embedding(text) for text in texts]
+
+    embeddings = []
+    openai_client = get_openai_client()
+
+    for start in range(0, len(texts), EMBED_BATCH_SIZE):
+        batch = texts[start:start + EMBED_BATCH_SIZE]
+
+        for attempt in range(3):
+            try:
+                response = openai_client.embeddings.create(
+                    model=EMBED_MODEL,
+                    input=batch,
+                )
+                embeddings.extend(item.embedding for item in response.data)
+                break
+            except (APITimeoutError, APIConnectionError, RateLimitError):
+                if attempt == 2:
+                    raise
+                time.sleep(2 ** attempt)
+
+    return embeddings
