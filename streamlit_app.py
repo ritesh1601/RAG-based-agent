@@ -295,7 +295,7 @@ def wait_for_run_output(event_id: str, timeout_s: float = 420.0, poll_interval_s
             if last_status in {"Completed", "Succeeded", "Success", "Finished"}:
                 return run.get("output") or {}
             if last_status in {"Failed", "Cancelled"}:
-                raise RuntimeError(f"Function run {last_status}")
+                raise RuntimeError(f"Function run {last_status}: {run}")
         time.sleep(poll_interval_s)
 
     raise TimeoutError(f"Timed out waiting for run output. Last status: {last_status}")
