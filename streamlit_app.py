@@ -283,7 +283,7 @@ def fetch_runs(event_id: str) -> list[dict]:
     return response.json().get("data", [])
 
 
-def wait_for_run_output(event_id: str, timeout_s: float = 150.0, poll_interval_s: float = 0.75) -> dict:
+def wait_for_run_output(event_id: str, timeout_s: float = 420.0, poll_interval_s: float = 2.0) -> dict:
     started_at = time.time()
     last_status = "Queued"
 
@@ -332,7 +332,10 @@ def render_metric(label: str, value: str) -> str:
     )
 
 
-embedding_mode = "Fake local vectors" if os.getenv("USE_FAKE_EMBEDDINGS", "").lower() in {"1", "true", "yes"} else "OpenAI embeddings"
+if os.getenv("USE_FAKE_EMBEDDINGS", "").lower() in {"1", "true", "yes"}:
+    embedding_mode = "Fake local vectors"
+else:
+    embedding_mode = os.getenv("EMBED_PROVIDER", "openai")
 
 with st.sidebar:
     st.markdown("### RAG Control Plane")

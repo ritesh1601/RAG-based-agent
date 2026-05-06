@@ -11,6 +11,7 @@ import uuid
 import os
 import datetime
 import requests
+import time
 from data_loader import load_and_chunk_pdf, embed_texts
 from vector_db import QdrantStorage
 from custom_types import RAQQueryResult, RAGSearchResult, RAGUpsertResult, RAGChunkAndSrc
@@ -72,9 +73,16 @@ async def rag_inngest_pdf(ctx: inngest.Context):
 )
 async def rag_query_pdf_ai(ctx: inngest.Context):
     def _search(question: str, top_k: int = 5) -> RAGSearchResult:
+        started_at = time.time()
+        logger.info("Starting RAG search with top_k=%s", top_k)
         query_vec = embed_texts([question])[0]
         store = QdrantStorage()
         found = store.search(query_vec, top_k)
+        logger.info(
+            "Finished RAG search in %.2fs with %s contexts",
+            time.time() - started_at,
+            len(found["contexts"]),
+        )
         return RAGSearchResult(contexts=found["contexts"], sources=found["sources"])
 
     question = ctx.event.data["question"]
