@@ -83,6 +83,14 @@ async def rag_query_pdf_ai(ctx: inngest.Context):
     found = await ctx.step.run("embed-and-search", lambda: _search(question, top_k), output_type=RAGSearchResult)
 
     context_block = "\n\n".join(f"- {c}" for c in found.contexts)
+    answer_provider = os.getenv("ANSWER_PROVIDER", "openai").lower()
+    if answer_provider == "extractive":
+        answer = (
+            "I found the most relevant context below:\n\n"
+            f"{context_block or 'No matching context was found.'}"
+        )
+        return {"answer": answer, "sources": found.sources, "num_contexts": len(found.contexts)}
+
     user_content = (
         "Use the following context to answer the question.\n\n"
         f"Context:\n{context_block}\n\n"
