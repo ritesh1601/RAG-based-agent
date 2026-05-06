@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 import uuid
 import os
 import datetime
+import requests
 from data_loader import load_and_chunk_pdf, embed_texts
 from vector_db import QdrantStorage
 from custom_types import RAQQueryResult, RAGSearchResult, RAGUpsertResult, RAGChunkAndSrc
@@ -168,6 +169,23 @@ async def query_pdf(payload: dict):
         "status": "queued",
         "event_id": event_ids[0],
     }
+
+
+@app.get("/runs/{event_id}")
+async def get_event_runs(event_id: str):
+    if not inngest_signing_key:
+        raise HTTPException(status_code=500, detail="INNGEST_SIGNING_KEY is not configured")
+
+    response = requests.get(
+        f"https://api.inngest.com/v1/events/{event_id}/runs",
+        headers={"Authorization": f"Bearer {inngest_signing_key}"},
+        timeout=10,
+    )
+
+    if response.status_code >= 400:
+        raise HTTPException(status_code=response.status_code, detail=response.text)
+
+    return response.json()
 
 
 inngest.fast_api.serve(app, inngest_client, [rag_inngest_pdf, rag_query_pdf_ai])

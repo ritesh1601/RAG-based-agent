@@ -9,7 +9,6 @@ import streamlit as st
 load_dotenv()
 
 INNGEST_UI_URL = os.getenv("INNGEST_UI_URL", "http://127.0.0.1:8288")
-INNGEST_API_BASE = os.getenv("INNGEST_API_BASE", f"{INNGEST_UI_URL}/v1")
 FASTAPI_URL = os.getenv("FASTAPI_URL", "http://127.0.0.1:8000").rstrip("/")
 
 
@@ -279,7 +278,7 @@ def send_query_to_backend(question: str, top_k: int) -> dict:
 
 
 def fetch_runs(event_id: str) -> list[dict]:
-    response = requests.get(f"{INNGEST_API_BASE}/events/{event_id}/runs", timeout=10)
+    response = requests.get(f"{FASTAPI_URL}/runs/{event_id}", timeout=10)
     response.raise_for_status()
     return response.json().get("data", [])
 
