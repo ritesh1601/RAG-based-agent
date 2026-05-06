@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 import inngest
@@ -111,6 +112,20 @@ async def rag_query_pdf_ai(ctx: inngest.Context):
     return {"answer": answer, "sources": found.sources, "num_contexts": len(found.contexts)}
 
 app = FastAPI()
+logger = logging.getLogger("uvicorn")
+
+
+async def send_inngest_event(name: str, data: dict[str, Any]) -> str:
+    try:
+        event_ids = await inngest_client.send(inngest.Event(name=name, data=data))
+    except Exception as exc:
+        logger.exception("Failed to send Inngest event %s", name)
+        raise HTTPException(status_code=502, detail=f"Failed to send Inngest event: {exc}") from exc
+
+    if not event_ids:
+        raise HTTPException(status_code=502, detail="Inngest did not return an event ID")
+
+    return event_ids[0]
 
 
 @app.get("/health")
@@ -131,19 +146,17 @@ async def upload_pdf(file: UploadFile = File(...)):
     file_path = UPLOADS_DIR / f"{uuid.uuid4()}-{safe_name}"
     file_path.write_bytes(await file.read())
 
-    event_ids = await inngest_client.send(
-        inngest.Event(
-            name="rag/ingest_pdf",
-            data={
-                "pdf_path": str(file_path.resolve()),
-                "source_id": safe_name,
-            },
-        )
+    event_id = await send_inngest_event(
+        "rag/ingest_pdf",
+        {
+            "pdf_path": str(file_path.resolve()),
+            "source_id": safe_name,
+        },
     )
 
     return {
         "status": "queued",
-        "event_id": event_ids[0],
+        "event_id": event_id,
         "filename": safe_name,
     }
 
@@ -155,19 +168,17 @@ async def query_pdf(payload: dict):
         raise HTTPException(status_code=400, detail="Question is required")
 
     top_k = int(payload.get("top_k", 5))
-    event_ids = await inngest_client.send(
-        inngest.Event(
-            name="rag/query_pdf_ai",
-            data={
-                "question": question,
-                "top_k": top_k,
-            },
-        )
+    event_id = await send_inngest_event(
+        "rag/query_pdf_ai",
+        {
+            "question": question,
+            "top_k": top_k,
+        },
     )
 
     return {
         "status": "queued",
-        "event_id": event_ids[0],
+        "event_id": event_id,
     }
 
 
