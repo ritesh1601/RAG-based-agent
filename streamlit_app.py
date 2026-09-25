@@ -1,5 +1,7 @@
 import os
 import time
+import json
+from typing import Any, Optional
 
 from dotenv import load_dotenv
 import requests
@@ -11,255 +13,198 @@ load_dotenv()
 INNGEST_UI_URL = os.getenv("INNGEST_UI_URL", "http://127.0.0.1:8288")
 FASTAPI_URL = os.getenv("FASTAPI_URL", "http://127.0.0.1:8000").rstrip("/")
 
+STAGE_COPY = {
+    "Queued": "Queued for processing",
+    "Running": "Reading your documents",
+    "Step Running": "Working through the passage",
+}
 
 st.set_page_config(
-    page_title="RAG Document Assistant",
+    page_title="Document Assistant",
+    page_icon="📚",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-
 st.markdown(
     """
     <style>
+    @import url('https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Inter:wght@400;500;600;700&display=swap');
+
     :root {
-        --bg: #0b0f17;
-        --panel: #111827;
-        --panel-soft: #151f2f;
-        --border: rgba(148, 163, 184, 0.22);
-        --muted: #94a3b8;
-        --text: #e5eefb;
-        --accent: #38bdf8;
-        --accent-2: #22c55e;
-        --warn: #f59e0b;
+        --bg: #0f1216;
+        --bg-glow: rgba(232, 163, 61, 0.08);
+        --surface: #171b21;
+        --surface-2: #1d232c;
+        --border: rgba(255, 255, 255, 0.08);
+        --border-strong: rgba(255, 255, 255, 0.16);
+        --text: #edf0f4;
+        --text-muted: #8b93a3;
+        --text-faint: #5c6577;
+        --accent: #e8a33d;
+        --accent-strong: #f4b959;
+        --accent-soft: rgba(232, 163, 61, 0.12);
+        --accent-border: rgba(232, 163, 61, 0.35);
+        --danger: #e5484d;
+        --danger-soft: rgba(229, 72, 77, 0.12);
+        --success: #4ade80;
+        --radius: 14px;
+        --radius-sm: 10px;
     }
+
+    html, body, [class*="css"] { font-family: 'Inter', -apple-system, sans-serif; }
 
     .stApp {
         background:
-            radial-gradient(circle at top left, rgba(56, 189, 248, 0.12), transparent 30rem),
-            linear-gradient(135deg, #090d14 0%, #101826 52%, #0a1019 100%);
+            radial-gradient(circle at 12% 6%, var(--bg-glow), transparent 34rem),
+            var(--bg);
         color: var(--text);
     }
 
-    [data-testid="stSidebar"] {
-        background: #080c13;
+    #MainMenu { visibility: hidden; }
+    footer { visibility: hidden; }
+    header[data-testid="stHeader"] { background: transparent; }
+
+    .main .block-container {
+        max-width: 46rem;
+        padding-top: 1.5rem;
+        padding-bottom: 7rem;
+    }
+
+    /* Sidebar */
+    section[data-testid="stSidebar"] {
+        background: var(--surface);
         border-right: 1px solid var(--border);
     }
+    section[data-testid="stSidebar"] .block-container { padding-top: 1.75rem; }
+    section[data-testid="stSidebar"] h3, section[data-testid="stSidebar"] strong { color: var(--text); }
 
-    [data-testid="stHeader"] {
-        background: rgba(8, 12, 19, 0.72);
-        backdrop-filter: blur(14px);
-    }
-
-    .block-container {
-        max-width: 1240px;
-        padding-top: 2.5rem;
-        padding-bottom: 3rem;
-    }
-
-    h1, h2, h3 {
-        letter-spacing: 0;
-    }
-
-    .hero {
-        padding: 1.1rem 0 1.4rem 0;
-    }
-
-    .eyebrow {
-        color: var(--accent);
-        font-size: 0.78rem;
-        font-weight: 700;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        margin-bottom: 0.4rem;
-    }
-
-    .hero-title {
+    .brand { margin-bottom: 1.5rem; }
+    .brand-mark {
+        font-family: 'Newsreader', serif;
+        font-size: 1.55rem;
+        font-weight: 500;
         color: var(--text);
-        font-size: 2.65rem;
-        font-weight: 800;
-        line-height: 1.05;
-        margin-bottom: 0.55rem;
+        line-height: 1.2;
     }
+    .brand-sub { font-size: 0.78rem; color: var(--text-muted); margin-top: 0.15rem; }
 
-    .hero-copy {
-        color: var(--muted);
-        font-size: 1.02rem;
-        max-width: 760px;
-        line-height: 1.7;
-    }
-
-    .metric-row {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 0.8rem;
-        margin: 1.1rem 0 1.4rem;
-    }
-
-    .metric {
-        border: 1px solid var(--border);
-        background: linear-gradient(180deg, rgba(17, 24, 39, 0.94), rgba(15, 23, 42, 0.9));
-        border-radius: 8px;
-        padding: 1rem;
-    }
-
-    .metric-label {
-        color: var(--muted);
-        font-size: 0.78rem;
-        margin-bottom: 0.35rem;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-    }
-
-    .metric-value {
-        color: var(--text);
-        font-size: 1.05rem;
-        font-weight: 700;
-    }
-
-    .card {
-        border: 1px solid var(--border);
-        background: linear-gradient(180deg, rgba(17, 24, 39, 0.94), rgba(15, 23, 42, 0.9));
-        border-radius: 8px;
-        padding: 1.2rem;
-        box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
-        min-height: 100%;
-    }
-
-    .card-title {
-        color: var(--text);
-        font-size: 1.05rem;
-        font-weight: 800;
-        margin-bottom: 0.25rem;
-    }
-
-    .card-copy {
-        color: var(--muted);
-        font-size: 0.9rem;
-        line-height: 1.55;
-        margin-bottom: 1rem;
-    }
-
-    .pipeline {
-        display: grid;
-        grid-template-columns: repeat(6, minmax(0, 1fr));
-        gap: 0.7rem;
-        margin: 0.75rem 0 1.4rem;
-    }
-
-    .pipeline-step {
-        border: 1px solid var(--border);
-        background: rgba(15, 23, 42, 0.74);
-        border-radius: 8px;
-        padding: 0.85rem;
-        min-height: 112px;
-    }
-
-    .pipeline-index {
-        color: var(--accent);
-        font-weight: 800;
-        font-size: 0.78rem;
-        margin-bottom: 0.55rem;
-    }
-
-    .pipeline-title {
-        color: var(--text);
-        font-size: 0.9rem;
-        font-weight: 800;
-        line-height: 1.28;
-        margin-bottom: 0.35rem;
-    }
-
-    .pipeline-copy {
-        color: var(--muted);
-        font-size: 0.78rem;
-        line-height: 1.42;
-    }
-
-    .status-pill {
+    .pill {
         display: inline-flex;
         align-items: center;
-        border: 1px solid rgba(34, 197, 94, 0.32);
-        color: #bbf7d0;
-        background: rgba(34, 197, 94, 0.12);
+        gap: 0.4rem;
+        border: 1px solid var(--border-strong);
+        background: var(--surface-2);
+        color: var(--text-muted);
         border-radius: 999px;
-        padding: 0.28rem 0.65rem;
-        font-size: 0.78rem;
-        font-weight: 700;
+        padding: 0.28rem 0.75rem;
+        font-size: 0.74rem;
     }
+    .pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); flex: none; }
 
-    .chat-answer {
-        border-left: 3px solid var(--accent);
-        background: rgba(14, 165, 233, 0.09);
-        border-radius: 8px;
-        padding: 1rem 1.1rem;
+    /* Empty state */
+    .empty-wrap { text-align: center; padding: 4rem 1rem 2rem; }
+    .empty-title {
+        font-family: 'Newsreader', serif;
+        font-size: 2.15rem;
+        font-weight: 500;
         color: var(--text);
-        line-height: 1.62;
+        margin-bottom: 0.65rem;
+    }
+    .empty-copy {
+        color: var(--text-muted);
+        font-size: 0.98rem;
+        max-width: 32rem;
+        margin: 0 auto;
+        line-height: 1.6;
     }
 
-    .source-item {
+    /* Buttons */
+    .stButton > button {
+        background: var(--surface-2);
+        color: var(--text);
+        border: 1px solid var(--border-strong);
+        border-radius: var(--radius-sm);
+        font-weight: 500;
+        transition: border-color .15s ease, background .15s ease, color .15s ease;
+    }
+    .stButton > button:hover {
+        border-color: var(--accent-border);
+        background: var(--accent-soft);
+        color: var(--accent-strong);
+    }
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+        color: #17130a;
+        border: none;
+        font-weight: 600;
+    }
+    .stButton > button[kind="primary"]:hover { filter: brightness(1.06); }
+    .stButton > button:disabled { opacity: 0.4; }
+
+    /* Chat messages */
+    div[data-testid="stChatMessage"] {
+        background: var(--surface);
         border: 1px solid var(--border);
-        background: rgba(15, 23, 42, 0.62);
-        border-radius: 8px;
-        padding: 0.65rem 0.8rem;
-        color: var(--muted);
-        margin-top: 0.45rem;
+        border-radius: var(--radius);
+        padding: 0.95rem 1.15rem;
+        margin-bottom: 0.9rem;
+    }
+    div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-user"]),
+    div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageAvatarUser"]) {
+        background: var(--accent-soft);
+        border-color: var(--accent-border);
+    }
+
+    /* Chat input */
+    div[data-testid="stChatInput"] {
+        background: var(--surface-2);
+        border: 1px solid var(--border-strong);
+        border-radius: 999px;
+    }
+    div[data-testid="stChatInput"] textarea { color: var(--text); }
+
+    /* Source excerpt card */
+    .source-card {
+        border-left: 3px solid var(--accent);
+        background: var(--surface-2);
+        padding: 0.55rem 0.85rem;
+        margin-bottom: 0.5rem;
+        border-radius: 0 8px 8px 0;
+        font-family: 'Newsreader', serif;
+        font-style: italic;
+        color: var(--text-muted);
         font-size: 0.88rem;
+        line-height: 1.55;
     }
 
-    .stButton > button, .stDownloadButton > button {
-        border-radius: 8px;
-        border: 1px solid rgba(56, 189, 248, 0.4);
-        background: linear-gradient(135deg, #0284c7 0%, #0ea5e9 100%);
-        color: white;
-        font-weight: 800;
-        min-height: 2.75rem;
+    /* Thinking indicator */
+    .thinking { color: var(--text-muted); font-size: 0.92rem; display: flex; align-items: center; gap: 0.35rem; }
+    .thinking .dots span { animation: blink 1.4s infinite; opacity: 0.2; }
+    .thinking .dots span:nth-child(2) { animation-delay: 0.2s; }
+    .thinking .dots span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes blink { 0%, 80%, 100% { opacity: 0.2; } 40% { opacity: 1; } }
+
+    /* Error card */
+    .error-card {
+        border-left: 3px solid var(--danger);
+        background: var(--danger-soft);
+        padding: 0.7rem 0.9rem;
+        border-radius: 0 8px 8px 0;
+        color: #ffb4b6;
+        font-size: 0.9rem;
     }
 
-    .stButton > button:hover, .stDownloadButton > button:hover {
-        border-color: rgba(125, 211, 252, 0.8);
-        box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.14);
-    }
-
-    .stTextInput input, .stNumberInput input, textarea {
-        border-radius: 8px !important;
-        border-color: var(--border) !important;
-        background: rgba(15, 23, 42, 0.8) !important;
-        color: var(--text) !important;
-    }
-
-    [data-testid="stFileUploader"] {
-        border: 1px dashed rgba(148, 163, 184, 0.32);
-        background: rgba(15, 23, 42, 0.48);
-        border-radius: 8px;
-        padding: 0.8rem;
-    }
-
-    @media (max-width: 980px) {
-        .pipeline, .metric-row {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
-
-        .hero-title {
-            font-size: 2.1rem;
-        }
-    }
-
-    @media (max-width: 640px) {
-        .pipeline, .metric-row {
-            grid-template-columns: 1fr;
-        }
-
-        .hero-title {
-            font-size: 1.8rem;
-        }
-    }
+    .stFileUploader section { background: var(--surface-2); border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
 
+# ----------------------------------------------------------------------------
+# Backend helpers
+# ----------------------------------------------------------------------------
 def upload_pdf_to_backend(file) -> dict:
     files = {"file": (file.name, file.getvalue(), "application/pdf")}
     response = requests.post(f"{FASTAPI_URL}/upload", files=files, timeout=60)
@@ -283,8 +228,22 @@ def fetch_runs(event_id: str) -> list[dict]:
     return response.json().get("data", [])
 
 
-def wait_for_run_output(event_id: str, timeout_s: float = 420.0, poll_interval_s: float = 2.0) -> dict:
+def thinking_html(label: str) -> str:
+    return (
+        f'<div class="thinking">{label}'
+        f'<span class="dots"><span>.</span><span>.</span><span>.</span></span></div>'
+    )
+
+
+def wait_for_run_output(
+    event_id: str,
+    status_placeholder: Optional[Any] = None,
+    timeout_s: float = 600.0,
+    poll_interval_s: float = 2.0,
+) -> dict:
     started_at = time.time()
+    owns_placeholder = status_placeholder is None
+    placeholder = status_placeholder or st.empty()
     last_status = "Queued"
 
     while time.time() - started_at <= timeout_s:
@@ -292,166 +251,210 @@ def wait_for_run_output(event_id: str, timeout_s: float = 420.0, poll_interval_s
         if runs:
             run = runs[0]
             last_status = run.get("status") or last_status
+            label = STAGE_COPY.get(last_status, last_status)
+
             if last_status in {"Completed", "Succeeded", "Success", "Finished"}:
-                return run.get("output") or {}
-            if last_status in {"Failed", "Cancelled"}:
+                output = run.get("output")
+                
+                # CRITICAL FIX: If output is None, the dev server hasn't committed the JSON yet.
+                # Keep polling instead of immediately returning!
+                if output is None:
+                    placeholder.markdown(thinking_html("Finalizing answer"), unsafe_allow_html=True)
+                    time.sleep(poll_interval_s)
+                    continue 
+                
+                # Safely parse JSON if Inngest returns it as a string
+                if isinstance(output, str):
+                    try:
+                        output = json.loads(output)
+                    except json.JSONDecodeError:
+                        pass
+                
+                if owns_placeholder:
+                    placeholder.empty()
+                
+                # Wrap it if it's somehow completely empty to avoid .get() crashes
+                if not isinstance(output, dict):
+                    output = {"raw_output": output, "run_id": run.get("id")}
+                return output
+
+            elif last_status in {"Failed", "Cancelled"}:
+                if owns_placeholder:
+                    placeholder.empty()
                 raise RuntimeError(f"Function run {last_status}: {run}")
+            else:
+                placeholder.markdown(thinking_html(label), unsafe_allow_html=True)
+        else:
+            placeholder.markdown(thinking_html("Initializing"), unsafe_allow_html=True)
+
         time.sleep(poll_interval_s)
 
+    if owns_placeholder:
+        placeholder.empty()
     raise TimeoutError(f"Timed out waiting for run output. Last status: {last_status}")
 
 
-def render_pipeline() -> None:
-    steps = [
-        ("01", "Upload PDF", "A local document is saved for ingestion."),
-        ("02", "Read & Chunk", "Pages are split into retrievable text units."),
-        ("03", "Embed", "Chunks become vectors with the configured embedding mode."),
-        ("04", "Store", "Vectors and source text are written to Qdrant."),
-        ("05", "Retrieve", "Questions are embedded and matched against Qdrant."),
-        ("06", "Answer", "The model responds using retrieved context."),
-    ]
-    html = '<div class="pipeline">'
-    for index, title, copy in steps:
-        html += (
-            '<div class="pipeline-step">'
-            f'<div class="pipeline-index">{index}</div>'
-            f'<div class="pipeline-title">{title}</div>'
-            f'<div class="pipeline-copy">{copy}</div>'
-            '</div>'
-        )
-    html += "</div>"
-    st.markdown(html, unsafe_allow_html=True)
+def render_history_message(msg: dict) -> None:
+    with st.chat_message(msg["role"]):
+        if msg.get("error"):
+            st.markdown(
+                f'<div class="error-card">Something went wrong: {msg["error"]}</div>',
+                unsafe_allow_html=True,
+            )
+            return
+        st.markdown(msg["content"])
+        sources = msg.get("sources") or []
+        if sources:
+            with st.expander(f"Sources ({len(sources)})", expanded=False):
+                for source in sources:
+                    st.markdown(f'<div class="source-card">{source}</div>', unsafe_allow_html=True)
 
 
-def render_metric(label: str, value: str) -> str:
-    return (
-        '<div class="metric">'
-        f'<div class="metric-label">{label}</div>'
-        f'<div class="metric-value">{value}</div>'
-        '</div>'
-    )
+# ----------------------------------------------------------------------------
+# Session state
+# ----------------------------------------------------------------------------
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "ingest_history" not in st.session_state:
+    st.session_state.ingest_history = []
 
+queued_prompt = st.session_state.pop("queued_prompt", None)
 
 if os.getenv("USE_FAKE_EMBEDDINGS", "").lower() in {"1", "true", "yes"}:
     embedding_mode = "Fake local vectors"
 else:
-    embedding_mode = os.getenv("EMBED_PROVIDER", "openai")
+    embedding_mode = os.getenv("EMBED_PROVIDER", "NVIDIA NIM")
 
+
+# ----------------------------------------------------------------------------
+# Sidebar
+# ----------------------------------------------------------------------------
 with st.sidebar:
-    st.markdown("### RAG Control Plane")
-    st.caption("Local development workspace")
-    st.markdown(f'<span class="status-pill">{embedding_mode}</span>', unsafe_allow_html=True)
-    st.divider()
-    st.markdown("**Services**")
-    st.caption(f"FastAPI: `{FASTAPI_URL}`")
-    st.caption(f"Inngest: `{INNGEST_UI_URL}`")
-    st.caption("Qdrant: `http://localhost:6333`")
-    st.divider()
-    st.markdown("**Events**")
-    st.caption("`rag/ingest_pdf`")
-    st.caption("`rag/query_pdf_ai`")
-
-
-st.markdown(
-    """
-    <section class="hero">
-        <div class="eyebrow">Private Knowledge Workflow</div>
-        <div class="hero-title">RAG-Powered Document Intelligence</div>
-        <div class="hero-copy">
-            Upload source PDFs, index them through an observable Inngest workflow, and query your Qdrant-backed knowledge base from one focused dashboard.
-        </div>
-    </section>
-    """,
-    unsafe_allow_html=True,
-)
-
-st.markdown(
-    '<div class="metric-row">'
-    + render_metric("Ingestion", "Inngest + Qdrant")
-    + render_metric("Retrieval", "Vector search")
-    + render_metric("Answering", "Context-grounded")
-    + "</div>",
-    unsafe_allow_html=True,
-)
-
-render_pipeline()
-
-left, right = st.columns([0.95, 1.05], gap="large")
-
-with left:
     st.markdown(
-        """
-        <div class="card">
-            <div class="card-title">Build Knowledge Base</div>
-            <div class="card-copy">Index a PDF into the local vector store through the ingestion workflow.</div>
-        </div>
-        """,
+        '<div class="brand">'
+        '<div class="brand-mark">Document Assistant</div>'
+        '<div class="brand-sub">Ask questions, get answers grounded in your PDFs</div>'
+        '</div>',
         unsafe_allow_html=True,
     )
-    uploaded = st.file_uploader("PDF document", type=["pdf"], accept_multiple_files=False)
 
-    ingest_disabled = uploaded is None
-    if st.button("Start Ingestion", disabled=ingest_disabled, use_container_width=True):
-        with st.spinner("Starting ingestion workflow..."):
+    if st.button("＋ New chat", use_container_width=True):
+        st.session_state.messages = []
+        st.rerun()
+
+    st.divider()
+    st.markdown("**Add documents**")
+    uploaded = st.file_uploader(
+        "Select PDF",
+        type=["pdf"],
+        accept_multiple_files=False,
+        label_visibility="collapsed",
+    )
+    if st.button("Index document", disabled=(uploaded is None), type="primary", use_container_width=True):
+        with st.spinner("Uploading…"):
             try:
                 result = upload_pdf_to_backend(uploaded)
-                event_id = result["event_id"]
-                st.session_state["last_ingest_event_id"] = event_id
-                st.success(f"Ingestion started for {result['filename']}")
-                st.caption(f"Event ID: {event_id}")
+                st.session_state.ingest_history.insert(
+                    0, {"event_id": result["event_id"], "filename": result["filename"], "status": "Queued"}
+                )
+                st.toast(f"Indexing {result['filename']}", icon="✅")
             except Exception as exc:
                 st.error(f"Could not start ingestion: {exc}")
 
-    if "last_ingest_event_id" in st.session_state:
-        st.info(f"Last ingest event: {st.session_state['last_ingest_event_id']}")
+    if st.session_state.ingest_history:
+        with st.expander(f"Indexing activity ({len(st.session_state.ingest_history)})"):
+            for item in st.session_state.ingest_history[:6]:
+                st.caption(f"`{item['filename']}` — {item['status']}")
+            if st.button("Refresh status", use_container_width=True):
+                for item in st.session_state.ingest_history:
+                    try:
+                        runs = fetch_runs(item["event_id"])
+                        if runs:
+                            item["status"] = runs[0].get("status", item["status"])
+                    except Exception:
+                        pass
+                st.rerun()
 
-with right:
+    st.divider()
+    with st.expander("Answer settings"):
+        top_k = st.slider("Context depth (retrieved chunks)", min_value=1, max_value=10, value=5, key="top_k_slider")
+
+    with st.expander("System status"):
+        st.markdown(f'<span class="pill"><span class="dot"></span>{embedding_mode}</span>', unsafe_allow_html=True)
+        st.caption(f"FastAPI · `{FASTAPI_URL}`")
+        st.caption(f"Inngest · `{INNGEST_UI_URL}`")
+        st.caption("Qdrant · `http://localhost:6333`")
+        st.code("rag/ingest_pdf", language="text")
+        st.code("rag/query_pdf_ai", language="text")
+
+
+# ----------------------------------------------------------------------------
+# Main chat
+# ----------------------------------------------------------------------------
+if not st.session_state.messages and not queued_prompt:
     st.markdown(
         """
-        <div class="card">
-            <div class="card-title">Ask Your Documents</div>
-            <div class="card-copy">Send a question through retrieval and answer generation, then inspect the response and sources.</div>
+        <div class="empty-wrap">
+            <div class="empty-title">What's in your documents?</div>
+            <div class="empty-copy">
+                Upload a PDF from the sidebar, then ask anything — a summary, a specific
+                figure, or a clause buried on page 40. Answers come with the passages
+                they're drawn from.
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+    suggestions = [
+        "Summarize this document in a few sentences",
+        "What are the key takeaways?",
+        "List any dates or deadlines mentioned",
+    ]
+    cols = st.columns(3)
+    for col, suggestion in zip(cols, suggestions):
+        with col:
+            if st.button(suggestion, use_container_width=True, key=f"suggest_{suggestion}"):
+                st.session_state.queued_prompt = suggestion
+                st.rerun()
+else:
+    for msg in st.session_state.messages:
+        render_history_message(msg)
 
-    with st.form("rag_query_form"):
-        question = st.text_area(
-            "Question",
-            placeholder="Ask a question about the indexed PDFs...",
-            height=120,
-        )
-        top_k = st.slider("Retrieved chunks", min_value=1, max_value=12, value=5)
-        submitted = st.form_submit_button("Generate Answer", use_container_width=True)
+typed_prompt = st.chat_input("Message your documents…")
+prompt = queued_prompt or typed_prompt
 
-    if submitted:
-        if not question.strip():
-            st.warning("Enter a question before generating an answer.")
-        else:
-            with st.spinner("Retrieving context and generating answer..."):
-                try:
-                    result = send_query_to_backend(question.strip(), int(top_k))
-                    event_id = result["event_id"]
-                    output = wait_for_run_output(event_id)
-                    st.session_state["last_answer"] = output.get("answer", "")
-                    st.session_state["last_sources"] = output.get("sources", [])
-                    st.session_state["last_query_event_id"] = event_id
-                except Exception as exc:
-                    st.error(f"Query failed: {exc}")
+if prompt:
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    render_history_message(st.session_state.messages[-1])
 
-    if st.session_state.get("last_answer"):
-        st.markdown("#### AI Response")
-        st.markdown(
-            f'<div class="chat-answer">{st.session_state["last_answer"]}</div>',
-            unsafe_allow_html=True,
-        )
+    with st.chat_message("assistant"):
+        placeholder = st.empty()
+        placeholder.markdown(thinking_html("Sending your question"), unsafe_allow_html=True)
+        try:
+            result = send_query_to_backend(prompt, int(top_k))
+            event_id = result["event_id"]
+            output = wait_for_run_output(event_id, status_placeholder=placeholder)
+            
+            answer = output.get("answer")
+            if not answer:
+                answer = (
+                    "I couldn't find an answer in your documents.\n\n"
+                    f"*(Debug context: Output received from Inngest was: `{output}`)*"
+                )
+                
+            sources = output.get("sources", [])
 
-        sources = st.session_state.get("last_sources", [])
-        if sources:
-            st.markdown("#### Sources")
-            for source in sources:
-                st.markdown(f'<div class="source-item">{source}</div>', unsafe_allow_html=True)
+            placeholder.markdown(answer)
+            if sources:
+                with st.expander(f"Sources ({len(sources)})", expanded=False):
+                    for source in sources:
+                        st.markdown(f'<div class="source-card">{source}</div>', unsafe_allow_html=True)
 
-        if st.session_state.get("last_query_event_id"):
-            st.caption(f"Query event ID: {st.session_state['last_query_event_id']}")
+            st.session_state.messages.append(
+                {"role": "assistant", "content": answer, "sources": sources, "event_id": event_id}
+            )
+        except Exception as exc:
+            placeholder.markdown(
+                f'<div class="error-card">Something went wrong: {exc}</div>', unsafe_allow_html=True
+            )
+            st.session_state.messages.append({"role": "assistant", "content": None, "error": str(exc)})
